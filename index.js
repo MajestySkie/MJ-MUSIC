@@ -11,7 +11,7 @@ const {
 const ytdl = require('ytdl-core');
 const SpotifyWebApi = require('spotify-web-api-node');
 const { getPreview } = require('spotify-url-info');
-const yts = await import('yt-search');
+const yts = require('yt-search');
 
 const client = new Client({
   intents: [
@@ -76,7 +76,7 @@ client.on('messageCreate', async (message) => {
     queue.set(message.guild.id, serverQueue);
 
     for (const title of songs) {
-      const search = await yts.default(title);
+      const search = await yts(title);
       const video = search.videos[0];
       if (!video) continue;
 
