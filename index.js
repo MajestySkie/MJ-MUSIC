@@ -47,10 +47,8 @@ client.on('messageCreate', async (message) => {
 
   if (command === '!play') {
     if (!message.member.voice.channel) return message.reply('Kamu harus join voice channel dulu.');
-
     const query = args.join(' ');
     if (!query) return message.reply('Masukkan nama lagu atau link Spotify.');
-
     let songs = [];
 
     if (query.includes('spotify.com/playlist')) {
@@ -59,7 +57,6 @@ client.on('messageCreate', async (message) => {
         const playlistData = await spotifyApi.getPlaylist(playlistId);
         const data = await spotifyApi.getPlaylistTracks(playlistId, { limit: 30 });
         songs = data.body.items.map(item => `${item.track.name} ${item.track.artists[0].name}`);
-
         const embed = new EmbedBuilder()
           .setTitle('Added Playlist')
           .addFields(
@@ -68,16 +65,15 @@ client.on('messageCreate', async (message) => {
           )
           .setThumbnail(playlistData.body.images[0]?.url || '')
           .setColor('Green');
-
         message.channel.send({ embeds: [embed] });
-      } catch (error) {
+      } catch {
         return message.reply('Gagal membaca playlist Spotify.');
       }
     } else if (query.includes('spotify.com/track')) {
       try {
         const data = await getPreview(query);
         songs = [`${data.title} ${data.artist}`];
-      } catch (err) {
+      } catch {
         return message.reply('Gagal membaca data dari link Spotify.');
       }
     } else {
@@ -139,7 +135,18 @@ async function playNext(guildId, voiceChannel, textChannel) {
   }
 
   const video = serverQueue.shift();
-  const stream = ytdl(video.url, { filter: 'audioonly' });
+  const stream = ytdl(video.url, {
+    filter: 'audioonly',
+    quality: 'highestaudio',
+    highWaterMark: 1 << 25,
+    requestOptions: {
+      headers: {
+        'x-youtube-client-name': '1',
+        'x-youtube-client-version': '2.20210721.00.00'
+      }
+    }
+  });
+
   const resource = createAudioResource(stream);
   const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 
