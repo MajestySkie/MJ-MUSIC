@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const {
   joinVoiceChannel,
   createAudioPlayer,
@@ -56,8 +56,20 @@ client.on('messageCreate', async (message) => {
     if (query.includes('spotify.com/playlist')) {
       const playlistId = query.split('playlist/')[1].split('?')[0];
       try {
-        const data = await spotifyApi.getPlaylistTracks(playlistId, { limit: 10 });
+        const playlistData = await spotifyApi.getPlaylist(playlistId);
+        const data = await spotifyApi.getPlaylistTracks(playlistId, { limit: 30 });
         songs = data.body.items.map(item => `${item.track.name} ${item.track.artists[0].name}`);
+
+        const embed = new EmbedBuilder()
+          .setTitle('Added Playlist')
+          .addFields(
+            { name: 'Playlist', value: `[${playlistData.body.name}](${playlistData.body.external_urls.spotify})`, inline: false },
+            { name: 'Tracks', value: `${songs.length}`, inline: true }
+          )
+          .setThumbnail(playlistData.body.images[0]?.url || '')
+          .setColor('Green');
+
+        message.channel.send({ embeds: [embed] });
       } catch (error) {
         return message.reply('Gagal membaca playlist Spotify.');
       }
@@ -79,9 +91,7 @@ client.on('messageCreate', async (message) => {
       const search = await yts(title);
       const video = search.videos[0];
       if (!video) continue;
-
       serverQueue.push(video);
-      message.channel.send(`✅ Ditambahkan ke antrian: **${video.title}**`);
     }
 
     if (!players.get(message.guild.id)) {
