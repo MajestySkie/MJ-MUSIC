@@ -8,10 +8,10 @@ const {
   getVoiceConnection,
   NoSubscriberBehavior
 } = require('@discordjs/voice');
-const ytdl = require('ytdl-core');
 const SpotifyWebApi = require('spotify-web-api-node');
 const { getPreview } = require('spotify-url-info');
 const yts = require('yt-search');
+const play = require('play-dl');
 
 const client = new Client({
   intents: [
@@ -135,21 +135,12 @@ async function playNext(guildId, voiceChannel, textChannel) {
   }
 
   const video = serverQueue.shift();
-  const stream = ytdl(video.url, {
-    filter: 'audioonly',
-    quality: 'highestaudio',
-    highWaterMark: 1 << 25,
-    requestOptions: {
-      headers: {
-        'x-youtube-client-name': '1',
-        'x-youtube-client-version': '2.20210721.00.00'
-      }
-    }
+  const stream = await play.stream(video.url);
+  const resource = createAudioResource(stream.stream, {
+    inputType: stream.type
   });
 
-  const resource = createAudioResource(stream);
   const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
-
   const connection = joinVoiceChannel({
     channelId: voiceChannel.id,
     guildId: voiceChannel.guild.id,
