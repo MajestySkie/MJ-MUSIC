@@ -1,8 +1,17 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  getVoiceConnection,
+  NoSubscriberBehavior
+} = require('@discordjs/voice');
 const ytdl = require('ytdl-core');
+const SpotifyWebApi = require('spotify-web-api-node');
 const { getPreview } = require('spotify-url-info');
+const yts = await import('yt-search');
 
 const client = new Client({
   intents: [
@@ -13,58 +22,138 @@ const client = new Client({
   ]
 });
 
+const spotifyApi = new SpotifyWebApi({
+  clientId: process.env.SPOTIFY_CLIENT_ID,
+  clientSecret: process.env.SPOTIFY_CLIENT_SECRET
+});
+
+spotifyApi.clientCredentialsGrant().then(data => {
+  spotifyApi.setAccessToken(data.body['access_token']);
+}).catch(err => {
+  console.error('Spotify Auth Error:', err);
+});
+
+const queue = new Map();
+const players = new Map();
+
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
-  if (!message.content.startsWith('!play') || message.author.bot) return;
+  if (message.author.bot) return;
+  const args = message.content.trim().split(' ');
+  const command = args.shift().toLowerCase();
 
-  const args = message.content.slice(6).trim();
+  if (command === '!play') {
+    if (!message.member.voice.channel) return message.reply('Kamu harus join voice channel dulu.');
 
-  if (!args) return message.reply('Masukkan nama lagu atau link Spotify.');
+    const query = args.join(' ');
+    if (!query) return message.reply('Masukkan nama lagu atau link Spotify.');
 
-  let query = args;
+    let songs = [];
 
-  // Jika link Spotify, ambil judul lagu
-  if (args.includes('spotify.com/track')) {
-    try {
-      const data = await getPreview(args);
-      query = `${data.title} ${data.artist}`;
-    } catch (err) {
-      return message.reply('Gagal membaca data dari link Spotify.');
+    if (query.includes('spotify.com/playlist')) {
+      const playlistId = query.split('playlist/')[1].split('?')[0];
+      try {
+        const data = await spotifyApi.getPlaylistTracks(playlistId, { limit: 10 });
+        songs = data.body.items.map(item => `${item.track.name} ${item.track.artists[0].name}`);
+      } catch (error) {
+        return message.reply('Gagal membaca playlist Spotify.');
+      }
+    } else if (query.includes('spotify.com/track')) {
+      try {
+        const data = await getPreview(query);
+        songs = [`${data.title} ${data.artist}`];
+      } catch (err) {
+        return message.reply('Gagal membaca data dari link Spotify.');
+      }
+    } else {
+      songs = [query];
+    }
+
+    const serverQueue = queue.get(message.guild.id) || [];
+    queue.set(message.guild.id, serverQueue);
+
+    for (const title of songs) {
+      const search = await yts.default(title);
+      const video = search.videos[0];
+      if (!video) continue;
+
+      serverQueue.push(video);
+      message.channel.send(`✅ Ditambahkan ke antrian: **${video.title}**`);
+    }
+
+    if (!players.get(message.guild.id)) {
+      playNext(message.guild.id, message.member.voice.channel, message.channel);
     }
   }
 
-  // Cari lagu di YouTube
-  const yts = await import('yt-search');
-  const search = await yts.default(query);
-  const video = search.videos[0];
-  if (!video) return message.reply('Lagu tidak ditemukan di YouTube.');
+  if (command === '!skip') {
+    const player = players.get(message.guild.id);
+    if (player) player.stop();
+  }
 
-  const voiceChannel = message.member.voice.channel;
-  if (!voiceChannel) return message.reply('Kamu harus join voice channel dulu.');
+  if (command === '!pause') {
+    const player = players.get(message.guild.id);
+    if (player) player.pause();
+  }
+
+  if (command === '!resume') {
+    const player = players.get(message.guild.id);
+    if (player) player.unpause();
+  }
+
+  if (command === '!leave') {
+    const connection = getVoiceConnection(message.guild.id);
+    if (!connection) return message.reply('Bot tidak ada di voice channel.');
+    connection.destroy();
+    queue.delete(message.guild.id);
+    players.delete(message.guild.id);
+    return message.reply('Bot telah keluar dari voice channel.');
+  }
+
+  if (command === '!queue') {
+    const serverQueue = queue.get(message.guild.id);
+    if (!serverQueue || serverQueue.length === 0) return message.reply('Tidak ada lagu dalam antrian.');
+    const list = serverQueue.map((v, i) => `${i + 1}. ${v.title}`).join('\n');
+    return message.reply(`🎶 **Antrian Lagu:**\n${list}`);
+  }
+});
+
+async function playNext(guildId, voiceChannel, textChannel) {
+  const serverQueue = queue.get(guildId);
+  if (!serverQueue || serverQueue.length === 0) {
+    players.delete(guildId);
+    return;
+  }
+
+  const video = serverQueue.shift();
+  const stream = ytdl(video.url, { filter: 'audioonly' });
+  const resource = createAudioResource(stream);
+  const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 
   const connection = joinVoiceChannel({
     channelId: voiceChannel.id,
-    guildId: message.guild.id,
-    adapterCreator: message.guild.voiceAdapterCreator
+    guildId: voiceChannel.guild.id,
+    adapterCreator: voiceChannel.guild.voiceAdapterCreator
   });
 
-  const stream = ytdl(video.url, { filter: 'audioonly' });
-  const resource = createAudioResource(stream);
-  const player = createAudioPlayer();
+  players.set(guildId, player);
 
   player.play(resource);
   connection.subscribe(player);
-
-  message.reply(`Memutar: **${video.title}**`);
+  textChannel.send(`🎶 Sekarang memutar: **${video.title}**`);
 
   player.on(AudioPlayerStatus.Idle, () => {
-    connection.destroy();
+    playNext(guildId, voiceChannel, textChannel);
   });
-});
+
+  player.on('error', error => {
+    console.error('Audio player error:', error);
+    playNext(guildId, voiceChannel, textChannel);
+  });
+}
 
 client.login(process.env.DISCORD_TOKEN);
-
 require('./server');
